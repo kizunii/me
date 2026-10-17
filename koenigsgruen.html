@@ -1,0 +1,103 @@
+<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>Königsgrün – Schach</title>
+<style>
+:root{--bg:#f3efe3;--ink:#23301f;--card:#fffdf6;--gold:#b8923a;--g:#2f5d3a;--l:#f0e6c8;--d:#6b9a5b;--line:#d9d2bd;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#141a14;--ink:#ece6d2;--card:#1e281e;--line:#2f3d2f}}
+:root[data-theme="dark"]{--bg:#141a14;--ink:#ece6d2;--card:#1e281e;--line:#2f3d2f}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:"Segoe UI",system-ui,Helvetica,sans-serif}
+.wrap{max-width:1000px;margin:0 auto;padding:10px;display:grid;gap:12px;grid-template-columns:1fr}
+@media(min-width:860px){.wrap{grid-template-columns:minmax(0,560px) 1fr;align-items:start}header{grid-column:1/3}}
+header{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.logo{font:700 22px Georgia,serif;color:var(--gold)}.logo span{color:var(--g)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px;margin-bottom:10px}
+button,select,textarea{font:inherit;border-radius:10px}
+button{background:var(--g);color:#fff;border:0;padding:9px 12px;min-height:42px;cursor:pointer;margin:2px}
+button.alt{background:transparent;color:var(--ink);border:1px solid var(--line)}button.on{outline:2px solid var(--gold)}button:disabled{opacity:.4}
+button:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+select,textarea{background:var(--card);color:var(--ink);border:1px solid var(--line);padding:8px}
+textarea{width:100%;box-sizing:border-box;height:70px}
+#board{display:grid;grid-template-columns:repeat(8,1fr);width:100%;aspect-ratio:1;border-radius:8px;overflow:hidden;box-shadow:0 6px 20px #0005;border:3px solid #3b2f1a;touch-action:manipulation}
+.sq{position:relative;display:flex;align-items:center;justify-content:center;cursor:pointer;container-type:size}
+.l{background:var(--l)}.d{background:var(--d)}
+.lm::before{content:"";position:absolute;inset:0;background:#f5d84a88}.sel::before{content:"";position:absolute;inset:0;background:#f5d84acc}
+.ck{box-shadow:inset 0 0 0 100px #e0393988}
+.pc{position:relative;font-size:min(9vw,58px);line-height:1;transition:transform .15s}
+.pw{color:#fff;text-shadow:0 0 2px #000,0 0 2px #000,0 1px 3px #000}.pb{color:#1d1d1d;text-shadow:0 0 1px #fff8}
+.dot::after{content:"";position:absolute;width:28%;height:28%;border-radius:50%;background:#0003}.cap::after{content:"";position:absolute;inset:6%;border-radius:50%;border:5px solid #0004}
+.co{position:absolute;font-size:10px;opacity:.7;color:#222}.cf{right:3px;bottom:1px}.cr{left:3px;top:1px}
+.bar{display:flex;justify-content:space-between;align-items:center;padding:6px 4px;font-weight:600}
+.clk{font:700 22px ui-monospace,Menlo,monospace;background:#0003;padding:2px 10px;border-radius:8px}.clk.low{background:#c0392b;color:#fff}
+#mv{max-height:200px;overflow:auto;font-size:14px;line-height:1.8}#mv span.m{cursor:pointer;padding:1px 5px;border-radius:5px}#mv span.cur{background:var(--gold);color:#000}
+#pr{display:flex;gap:6px;justify-content:center;margin:6px}
+</style></head><body><div class="wrap" id="app"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+<script>
+const $=s=>document.querySelector(s),FL="abcdefgh",NAMES=["Anfänger","Leicht","Mittel","Fortgeschritten","Experte","Meister"],TC=[[60,"Bullet 1"],[180,"Blitz 3"],[300,"Blitz 5"],[600,"Rapid 10"]];
+const GL={p:"♟",n:"♞",b:"♝",r:"♜",q:"♛",k:"♚"};
+let C=lj("kg_cfg",{bot:2,tc:180,col:"w"}),ST=lj("kg_st",{w:0,l:0,d:0}),G={g:null,start:null,my:"w",t:{w:0,b:0},last:0,over:true,res:"Wähle einen Bot und starte eine Partie.",view:null,sel:null,flip:false,think:false,promo:null,io:""};
+function lj(k,d){try{return Object.assign(d,JSON.parse(localStorage.getItem(k))||{})}catch(e){return d}}
+function sj(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
+const fmt=ms=>{ms=Math.max(0,ms);const s=Math.ceil(ms/1000);return Math.floor(s/60)+":"+String(s%60).padStart(2,"0")};
+// ---- bot (own alpha-beta search; not Stockfish) ----
+const V={p:100,n:320,b:330,r:500,q:900,k:0},LV=[{d:1,r:.55,n:150},{d:1,r:.2,n:60},{d:2,r:.06,n:25},{d:3,r:.02,n:10,t:2500},{d:3,r:0,n:0,t:3500},{d:4,r:0,n:0,t:4500}];
+function ev(g){let s=0;g.board().forEach((row,r)=>row.forEach((c,f)=>{if(!c)return;let v=V[c.type];if(c.type==="n"||c.type==="b"||c.type==="p")v+=(7-Math.abs(3.5-f)*2-Math.abs(3.5-r)*2)*3;s+=c.color==="w"?v:-v}));return s}
+function nm(g,d,a,b,T){if(g.in_checkmate())return -1e5-d;if(g.in_draw())return 0;if(d===0)return ev(g)*(g.turn()==="w"?1:-1);
+ const ms=g.moves({verbose:true}).sort((x,y)=>(y.captured?1:0)-(x.captured?1:0));
+ for(const m of ms){g.move(m);const s=-nm(g,d-1,-b,-a,T);g.undo();if(s>a)a=s;if(a>=b||Date.now()>T)break}return a}
+function pickBot(){const L=LV[C.bot],g=G.g,ms=g.moves({verbose:true});if(!ms.length)return null;if(Math.random()<L.r)return ms[Math.random()*ms.length|0];
+ const T=Date.now()+(L.t||1500);let best=null,bs=-1e9;ms.sort((x,y)=>(y.captured?1:0)-(x.captured?1:0));
+ for(const m of ms){g.move(m);const s=-nm(g,L.d-1,-1e9,1e9,T)+Math.random()*L.n;g.undo();if(s>bs){bs=s;best=m}}return best}
+// ---- game flow ----
+function newGame(){G.g=new Chess();G.start=null;G.my=C.col==="r"?(Math.random()<.5?"w":"b"):C.col;G.t={w:C.tc*1000,b:C.tc*1000};G.last=Date.now();G.over=false;G.res="";G.view=null;G.sel=null;G.promo=null;G.flip=false;G.think=false;G.io="";render();if(G.my==="b")botGo()}
+function tick(){const n=Date.now();if(!G.over&&G.g&&G.g.history().length>0){const s=G.g.turn();G.t[s]-=n-G.last;if(G.t[s]<=0){G.t[s]=0;G.last=n;finish("Zeit abgelaufen – "+(s==="w"?"Schwarz":"Weiß")+" gewinnt",s==="w"?"b":"w");return}}G.last=n}
+function finish(txt,w){if(G.over)return;G.over=true;G.think=false;G.res=txt;if(w==="d")ST.d++;else if(w===G.my)ST.w++;else ST.l++;sj("kg_st",ST);render()}
+function after(){const g=G.g;let r="";
+ if(g.in_checkmate())return finish("Schachmatt – "+(g.turn()==="w"?"Schwarz":"Weiß")+" gewinnt",g.turn()==="w"?"b":"w");
+ if(g.in_stalemate())r="Patt – Remis";else if(g.in_threefold_repetition())r="Remis durch dreifache Stellungswiederholung";else if(g.insufficient_material())r="Remis – unzureichendes Material";else if(g.in_draw())r="Remis (50-Züge-Regel)";
+ if(r)return finish(r,"d");render();if(g.turn()!==G.my)botGo()}
+function botGo(){G.think=true;render();const t0=Date.now(),bt=G.t[G.my==="w"?"b":"w"],n=G.g.moves().length,base=[500,900,1500,2200,3000,4000][C.bot],want=Math.min(bt*.06,base*(.5+Math.random())*(n<3?.3:1)+Math.random()*400);
+ setTimeout(()=>{if(G.over)return;const m=pickBot(),wait=Math.max(0,want-(Date.now()-t0));setTimeout(()=>{if(G.over)return;G.think=false;if(!m)return;tick();if(G.over)return;G.g.move(m);after()},wait)},60)}
+function move(from,to,pr){tick();if(G.over)return;const m=G.g.move({from,to,promotion:pr||"q"});if(!m)return;G.sel=null;G.promo=null;after()}
+// ---- view ----
+function pos(){if(G.view===null)return G.g;const h=G.g.history({verbose:true}),t=G.start?new Chess(G.start):new Chess();for(let i=0;i<G.view;i++)t.move(h[i]);return t}
+function render(){if(!window.Chess){$("#app").innerHTML="<p>Die Schach-Bibliothek konnte nicht geladen werden. Bitte Seite neu laden.</p>";return}
+ if(!G.g)G.g=new Chess();const p=pos(),h=G.g.history({verbose:true}),idx=G.view===null?h.length:G.view,lm=h[idx-1],b=p.board(),chk=p.in_check()?p.turn():null,live=G.view===null&&!G.over&&G.g.turn()===G.my&&!G.think;
+ const leg=G.sel&&live?G.g.moves({square:G.sel,verbose:true}):[],bw=(G.my==="w")!==G.flip,top=bw?"b":"w";
+ let bd="";for(let i=0;i<8;i++)for(let j=0;j<8;j++){const r=bw?i:7-i,c=bw?j:7-j,sq=FL[c]+(8-r),pc=b[r][c],mv=leg.find(m=>m.to===sq);
+  bd+=`<div class="sq ${(r+c)%2?"d":"l"} ${lm&&(lm.from===sq||lm.to===sq)?"lm":""} ${G.sel===sq?"sel":""} ${chk&&pc&&pc.type==="k"&&pc.color===chk?"ck":""} ${mv?(pc?"cap":"dot"):""}" data-sq="${sq}" role="button" aria-label="${sq}">${pc?`<span class="pc ${pc.color==="w"?"pw":"pb"}">${GL[pc.type]}\uFE0E</span>`:""}${j===0?`<span class="co cr">${8-r}</span>`:""}${i===7?`<span class="co cf">${FL[c]}</span>`:""}</div>`}
+ const san=h.map(m=>m.san);let mv="";for(let i=0;i<san.length;i++){if(i%2===0)mv+=(i?" ":"")+(i/2+1)+". ";mv+=`<span class="m ${idx===i+1?"cur":""}" data-v="${i+1}">${san[i]}</span> `}
+ const st=G.over?G.res:G.think?"Bot denkt …":G.g.turn()===G.my?"Du bist am Zug"+(G.g.in_check()?" – Schach!":""):"Gegner am Zug";
+ const nm=c=>c===G.my?"Du":"Bot · "+NAMES[C.bot],bar=c=>`<div class="bar"><span>${nm(c)}</span><span class="clk" id="ck-${c}">${fmt(G.t[c])}</span></div>`;
+ $("#app").innerHTML=`<header><div class="logo">Königs<span>grün</span></div><div><small>Siege ${ST.w} · Niederlagen ${ST.l} · Remis ${ST.d}</small> <button class="alt" id="th" aria-label="Hell/Dunkel">◐</button></div></header>
+ <main>${bar(top)}<div id="board">${bd}</div>${bar(top==="w"?"b":"w")}<div class="card" role="status" aria-live="polite"><b>${st}</b>${G.promo?`<div id="pr">${["q","r","b","n"].map(x=>`<button data-pr="${x}"><span style="font-size:28px">${GL[x]}\uFE0E</span></button>`).join("")}</div>`:""}</div></main>
+ <aside><div class="card"><b>Neue Partie</b><div><select id="sb" aria-label="Bot">${NAMES.map((n,i)=>`<option value="${i}" ${C.bot===i?"selected":""}>Stufe ${i+1} – ${n}</option>`).join("")}</select>
+ <select id="sc" aria-label="Farbe">${[["w","Weiß"],["b","Schwarz"],["r","Zufall"]].map(x=>`<option value="${x[0]}" ${C.col===x[0]?"selected":""}>${x[1]}</option>`).join("")}</select></div>
+ <div>${TC.map(t=>`<button class="${C.tc===t[0]?"":"alt"}" data-tc="${t[0]}">${t[1]}</button>`).join("")}</div><button id="go">Spielen</button></div>
+ <div class="card"><button class="alt" id="fl">Brett drehen</button><button class="alt" id="dr" ${G.over?"disabled":""}>Remis anbieten</button><button class="alt" id="rs" ${G.over?"disabled":""}>Aufgeben</button>
+ <div><button class="alt" data-n="0" aria-label="Anfang">⏮</button><button class="alt" data-n="-1" aria-label="Zurück">◀</button><button class="alt" data-n="1" aria-label="Vor">▶</button><button class="alt" data-n="9999" aria-label="Ende">⏭</button></div></div>
+ <div class="card"><b>Züge</b><div id="mv">${mv||"–"}</div></div>
+ <div class="card"><b>Analyse</b><textarea id="io" aria-label="PGN oder FEN" placeholder="PGN oder FEN einfügen">${G.io.replace(/</g,"&lt;")}</textarea><button class="alt" id="ep">PGN anzeigen</button><button class="alt" id="ef">FEN anzeigen</button><button class="alt" id="lp">PGN laden</button><button class="alt" id="lf">FEN laden</button></div>
+ <p><small>Der Bot ist eine eigene Suchengine (kein Stockfish). Online-Multiplayer benötigt einen Server und ist in dieser Seite nicht enthalten.</small></p></aside>`;
+ const mvl=$("#mv"),cur=mvl.querySelector(".cur");if(cur)mvl.scrollTop=cur.offsetTop-80;else mvl.scrollTop=mvl.scrollHeight}
+function clocks(){for(const c of["w","b"]){const e=$("#ck-"+c);if(e){e.textContent=fmt(G.t[c]);e.classList.toggle("low",G.t[c]<10000&&!G.over)}}}
+// ---- events ----
+document.addEventListener("click",e=>{const t=e.target,d=s=>t.closest(s);let b;
+ if(b=d("[data-sq]")){const sq=b.dataset.sq;if(G.view!==null||G.over||G.think||G.g.turn()!==G.my||G.promo)return;
+  const mv=G.sel&&G.g.moves({square:G.sel,verbose:true}).find(m=>m.to===sq);
+  if(mv){if(mv.flags.includes("p")){G.promo={from:G.sel,to:sq};return render()}return move(G.sel,sq)}
+  const pc=G.g.get(sq);G.sel=pc&&pc.color===G.my?(G.sel===sq?null:sq):null;return render()}
+ if(b=d("[data-pr]"))return move(G.promo.from,G.promo.to,b.dataset.pr);
+ if(b=d("[data-tc]")){C.tc=+b.dataset.tc;sj("kg_cfg",C);return render()}
+ if(b=d("[data-v]")){G.view=+b.dataset.v>=G.g.history().length?null:+b.dataset.v;return render()}
+ if(b=d("[data-n]")){const n=G.g.history().length,c=G.view===null?n:G.view,v=Math.max(0,Math.min(n,b.dataset.n==="0"?0:b.dataset.n==="9999"?n:c+ +b.dataset.n));G.view=v>=n?null:v;return render()}
+ if(d("#go")){C.bot=+$("#sb").value;C.col=$("#sc").value;sj("kg_cfg",C);return newGame()}
+ if(d("#fl")){G.flip=!G.flip;return render()}
+ if(d("#th")){const r=document.documentElement,dk=getComputedStyle(r).getPropertyValue("--bg").trim()==="#141a14";r.dataset.theme=dk?"light":"dark";return}
+ if(d("#rs")&&confirm("Partie wirklich aufgeben?"))return finish("Du hast aufgegeben – "+(G.my==="w"?"Schwarz":"Weiß")+" gewinnt","x");
+ if(d("#dr")){const bs=ev(G.g)*(G.my==="w"?-1:1);if(bs<=60)return finish("Remis vereinbart","d");G.res="";alert("Der Bot lehnt das Remis ab.");return}
+ if(d("#ep")){G.io=G.g.pgn()||"";return render()}if(d("#ef")){G.io=pos().fen();return render()}
+ if(d("#lp")||d("#lf")){const v=$("#io").value.trim(),g=new Chess(),pgn=!!d("#lp");let ok=pgn?g.load_pgn(v):g.load(v);if(!ok)return alert(pgn?"PGN ungültig.":"FEN ungültig.");
+  G.g=g;G.start=pgn?null:v;G.over=true;G.res="Analysemodus";G.view=pgn?0:null;G.sel=null;G.my="w";G.think=false;if(pgn){const h=g.history();G.view=0}return render()}});
+document.addEventListener("input",e=>{if(e.target.id==="io")G.io=e.target.value});
+setInterval(()=>{if(document.hidden||G.over||!G.g)return;tick();clocks()},250);
+render();
+</script></body></html>
